@@ -1,0 +1,103 @@
+---
+title: "Practical Machine Learning Project"
+author: "Minh Vo"
+date: "10/27/2020"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(caret)
+library(knitr)
+opts_chunk$set(echo = TRUE)
+```
+
+# Synopsis
+
+In this project, I use data collected from accelerometers on the belt, forearm, arm, and dumbell of 6 participants, along with machine learning techniques to predict the manner in which people do exercise.
+
+# The data
+
+The training and testing data for this project, respectively, are downloaded from the provided links :
+
+```{r download}
+url_trn = 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv'
+url_tst = 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv'
+download.file(url = url_trn, destfile = 'pml_training.csv', method = 'curl')
+download.file(url = url_tst, destfile = 'pml_testing.csv', method = 'curl')
+```
+
+## Loading and Cleaning Data
+
+I first load the data and do some cleaning. Since there are a lot of missing data in the form of blank, I first fill the blank with NA and remove variables with more than 50% NAs.
+
+```{r clean}
+trn = read.csv('pml_training.csv')
+tst = read.csv('pml_testing.csv')
+
+# Replace empty cells in the training and testing data with NA
+trn[trn==''] = NA 
+tst[tst==''] = NA 
+
+# Remove variables with majority NAs
+rmNA_trn = apply(trn,2, function(x){mean(is.na(x))>.50})
+training = trn[, !rmNA_trn]
+
+rmNA_tst = apply(tst,2, function(x){mean(is.na(x))>.50})
+testing = tst[,!rmNA_tst]
+
+dim(training)
+dim(testing)
+```
+
+After the process, 60 variables remain: 1 outcome and 59 predictors. I further remove the first seven variables because they are related to identification and time stamp and thus have no forecasting power. The remaining data consist of 52 predictors and 1 outcome. I then convert the outcome $classe$ to a factor variable.
+
+```{r}
+trndat <- training %>% select(-c(1:7))%>% 
+        mutate(classe = factor(classe, levels = c('A', 'B', 'C', 'D', 'E')))
+tstdat <- testing %>% select(-c(1:7)) %>% rename(classe = problem_id)
+```
+
+# Model Selection
+
+To select the best model for the data, I use the (cleaned) training data set to fit and evaluate 3 models: Random Forest (RF), Generalized Boosted Model (GBM) and Linear Discriminant Analysis (LDA). I then use the best one in terms of forecast accuracy to fit the entire training data and then apply it to the testing data set. To that end, I partition the training data set $trndat$ into the $selTraining$ to train the three models, and $selTesting$ to evaluate them.
+
+To reduce the number of predictors, I use 'pca' preProcess option in the train function. Furthermore, I use 5-fold cross validation when I train the models.
+
+```{r select, message=FALSE, warning=FALSE, cache=TRUE}
+# Partition trndat into training and testing for model selection
+set.seed(456)
+inTrain <- createDataPartition(trndat$classe, p=0.7, list=FALSE)
+selTraining <- trndat[inTrain, ]
+selTesting <- trndat[-inTrain, ]
+
+# Fitting 3 models: GBM, RF and LDA
+ctrl = trainControl(method = 'cv', number = 5)
+sel_gbm = train(classe ~ ., data = selTraining, method='gbm', trControl = ctrl, verbose = F, preProcess='pca')
+sel_rf = train(classe ~ ., data = selTraining, method='rf', trControl = ctrl, verbose = F, preProcess='pca')
+sel_lda = train(classe ~ ., data = selTraining, method='lda', trControl = ctrl, verbose = F, preProcess='pca')
+
+# Predicting
+pred_gbm = predict(sel_gbm, selTesting)
+pred_rf = predict(sel_rf, selTesting)
+pred_lda = predict(sel_lda, selTesting)
+
+# Evaluating their accuracy
+confusionMatrix(pred_rf, selTesting$classe)$overall[1] # RF accuracy
+confusionMatrix(pred_gbm, selTesting$classe)$overall[1] # GBM accuracy
+confusionMatrix(pred_lda, selTesting$classe)$overall[1] #LDA accuracy
+```
+
+# Forecasting 
+
+Since the RF model yields the best accuracy, it is chosen to fit the training data and forecast using the testing data.
+
+```{r forecast, message=FALSE, warning=FALSE, cache=TRUE}
+set.seed(1234)
+rf = train(classe ~ ., data = trndat, method='rf', verbose = F, preProcess='pca')
+predict(rf, tstdat)
+```
+
+Based on the quiz result, the accuracy of the model forecast is 95%.
